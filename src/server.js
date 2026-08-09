@@ -103,6 +103,7 @@ async function main() {
     readTSV, appendTSV, rewriteTSV, auditLog,
     getSecret: (name) => secretStore.get(name) || null,
     driveDir: process.env.FINANCE_DRIVE_DIR || '',
+    defaultCurrency: process.env.FINANCE_DEFAULT_CURRENCY || '-',
   });
 
   const dates = createDatesClient({
