@@ -1,0 +1,16 @@
+{
+  "name": "@isconl/pulse",
+  "version": "0.1.0",
+  "private": false,
+  "description": "isconl-agent engine: finance, notifications, calendar, data health, rhythm/insights, projects, GitHub, Buffer, Telegram",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {},
+  "license": "MIT"
+}
