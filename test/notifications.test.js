@@ -51,9 +51,9 @@ test('notify() falls back to source:kind:title as the dedupe key when none is gi
   assert.equal(store.data['notifications.tsv'].length, 1);
 });
 
-test('notificationSweep raises an overdue-task notice from an injected fetchTasks', async () => {
+test('notificationSweep raises an overdue-task notice read directly from scope/tasks.tsv', async () => {
   const { client, store } = makeClient({
-    fetchTasks: async () => [{ ID: 'T1', TITLE: 'Renew SSH keys', STATUS: 'open', DUE_DATE: '2020-01-01', PRIORITY: 'high' }],
+    seed: { 'scope/tasks.tsv': [{ ID: 'T1', TITLE: 'Renew SSH keys', STATUS: 'open', DUE_DATE: '2020-01-01', PRIORITY: 'high' }] },
   });
   const raised = await client.notificationSweep();
   assert.equal(raised, 1);
@@ -63,10 +63,10 @@ test('notificationSweep raises an overdue-task notice from an injected fetchTask
 
 test('notificationSweep skips a done task and a task with no due date', async () => {
   const { client } = makeClient({
-    fetchTasks: async () => [
+    seed: { 'scope/tasks.tsv': [
       { ID: 'T1', TITLE: 'a', STATUS: 'done', DUE_DATE: '2020-01-01' },
       { ID: 'T2', TITLE: 'b', STATUS: 'open', DUE_DATE: '-' },
-    ],
+    ] },
   });
   const raised = await client.notificationSweep();
   assert.equal(raised, 0);
@@ -175,7 +175,7 @@ test('notificationSweep raises wellspring commit/PR notices, marking the operato
 
 test('a repeat sweep raises nothing new -- dedupe holds across separate sweep calls', async () => {
   const { client } = makeClient({
-    fetchTasks: async () => [{ ID: 'T1', TITLE: 'x', STATUS: 'open', DUE_DATE: '2020-01-01' }],
+    seed: { 'scope/tasks.tsv': [{ ID: 'T1', TITLE: 'x', STATUS: 'open', DUE_DATE: '2020-01-01' }] },
   });
   const first = await client.notificationSweep();
   const second = await client.notificationSweep();
