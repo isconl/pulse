@@ -11,6 +11,8 @@
     "start": "node src/server.js",
     "test": "node --test"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@bitwarden/sdk-napi": "^1.0.0"
+  },
   "license": "MIT"
 }
