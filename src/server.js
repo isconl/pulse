@@ -102,6 +102,7 @@ async function main() {
   const finance = createFinanceClient({
     readTSV, appendTSV, rewriteTSV, auditLog,
     getSecret: (name) => secretStore.get(name) || null,
+    driveDir: process.env.FINANCE_DRIVE_DIR || '',
   });
 
   const dates = createDatesClient({
