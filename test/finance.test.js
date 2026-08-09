@@ -7,9 +7,9 @@ function makeStore(seed = {}) {
   const data = { ...seed };
   return {
     data,
-    readTSV: (rel) => (data[rel] || []).slice(),
-    appendTSV: (rel, row) => { (data[rel] = data[rel] || []).push(row); },
-    rewriteTSV: (rel, fn) => {
+    readTSV: async (rel) => (data[rel] || []).slice(),
+    appendTSV: async (rel, row) => { (data[rel] = data[rel] || []).push(row); return true; },
+    rewriteTSV: async (rel, fn) => {
       const before = data[rel] || [];
       const after = fn(before.slice());
       data[rel] = after;
@@ -108,48 +108,48 @@ test('computeSummary: an income stream is overdue only once its due day has pass
   assert.equal(future.overdue, false);
 });
 
-test('upsertIncome requires a name for a new stream but not for updating an existing one', () => {
+test('upsertIncome requires a name for a new stream but not for updating an existing one', async () => {
   const store = makeStore();
   const client = createFinanceClient(store);
-  assert.throws(() => client.upsertIncome({ amount: 100 }), /name required/);
-  const { id } = client.upsertIncome({ name: 'Freelance', amount: 100 });
-  assert.doesNotThrow(() => client.upsertIncome({ id, amount: 200 }));
+  await assert.rejects(() => client.upsertIncome({ amount: 100 }), /name required/);
+  const { id } = await client.upsertIncome({ name: 'Freelance', amount: 100 });
+  await assert.doesNotReject(() => client.upsertIncome({ id, amount: 200 }));
   assert.equal(store.data['finance/incomes.tsv'].find(r => r.ID === id).AMOUNT, '200');
 });
 
-test('upsertAccount creates then updates in place by id, keeping one row per account', () => {
+test('upsertAccount creates then updates in place by id, keeping one row per account', async () => {
   const store = makeStore();
   const client = createFinanceClient(store);
-  const created = client.upsertAccount({ name: 'KCB', type: 'bank', balance: 500 });
+  const created = await client.upsertAccount({ name: 'KCB', type: 'bank', balance: 500 });
   assert.equal(created.created, true);
-  const updated = client.upsertAccount({ id: created.id, balance: 750 });
+  const updated = await client.upsertAccount({ id: created.id, balance: 750 });
   assert.equal(updated.created, false);
   assert.equal(store.data['finance/accounts.tsv'].length, 1);
   assert.equal(store.data['finance/accounts.tsv'][0].BALANCE, '750');
 });
 
-test('addTransaction rejects an invalid type or non-positive amount', () => {
+test('addTransaction rejects an invalid type or non-positive amount', async () => {
   const store = makeStore();
   const client = createFinanceClient(store);
-  assert.throws(() => client.addTransaction({ type: 'bogus', amount: 10 }), /type must be/);
-  assert.throws(() => client.addTransaction({ type: 'expense', amount: -5 }), /positive number/);
+  await assert.rejects(() => client.addTransaction({ type: 'bogus', amount: 10 }), /type must be/);
+  await assert.rejects(() => client.addTransaction({ type: 'expense', amount: -5 }), /positive number/);
 });
 
-test('addTransaction IDs sequence within the same date', () => {
+test('addTransaction IDs sequence within the same date', async () => {
   const store = makeStore();
   const client = createFinanceClient(store);
-  const t1 = client.addTransaction({ type: 'expense', amount: 10, date: '2026-08-09' });
-  const t2 = client.addTransaction({ type: 'expense', amount: 20, date: '2026-08-09' });
+  const t1 = await client.addTransaction({ type: 'expense', amount: 10, date: '2026-08-09' });
+  const t2 = await client.addTransaction({ type: 'expense', amount: 20, date: '2026-08-09' });
   assert.equal(t1.ID, 'finance-2026-08-09-001');
   assert.equal(t2.ID, 'finance-2026-08-09-002');
 });
 
-test('snapshot replaces an existing same-day row rather than duplicating it', () => {
+test('snapshot replaces an existing same-day row rather than duplicating it', async () => {
   const store = makeStore({ 'finance/accounts.tsv': [{ TYPE: 'cash', BALANCE: '1000' }] });
   const client = createFinanceClient(store);
-  const first = client.snapshot({ now: new Date('2026-08-09') });
+  const first = await client.snapshot({ now: new Date('2026-08-09') });
   store.data['finance/accounts.tsv'][0].BALANCE = '1500';
-  const second = client.snapshot({ now: new Date('2026-08-09') });
+  const second = await client.snapshot({ now: new Date('2026-08-09') });
   assert.equal(store.data['finance/networth.tsv'].length, 1);
   assert.equal(second.NET, '1500');
   assert.notEqual(first.NET, second.NET);
@@ -158,8 +158,8 @@ test('snapshot replaces an existing same-day row rather than duplicating it', ()
 test('upsertVenture requires a name for a new venture and clears its metrics cache on update', async () => {
   const store = makeStore();
   const client = createFinanceClient(store);
-  assert.throws(() => client.upsertVenture({}), /name required/);
-  const { id } = client.upsertVenture({ name: 'Keyvanos', url: 'https://keyvanos.example/metrics' });
+  await assert.rejects(() => client.upsertVenture({}), /name required/);
+  const { id } = await client.upsertVenture({ name: 'Keyvanos', url: 'https://keyvanos.example/metrics' });
   assert.equal(store.data['finance/ventures.tsv'].length, 1);
 });
 

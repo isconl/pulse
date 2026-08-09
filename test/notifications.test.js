@@ -7,8 +7,13 @@ function makeStore(seed = {}) {
   const data = { ...seed };
   return {
     data,
-    readTSV: (rel) => (data[rel] || []).slice(),
-    appendTSV: (rel, row) => { (data[rel] = data[rel] || []).push(row); },
+    readTSV: async (rel) => (data[rel] || []).slice(),
+    appendTSV: async (rel, row) => { (data[rel] = data[rel] || []).push(row); return true; },
+    rewriteTSV: async (rel, fn) => {
+      const before = (data[rel] || []).length;
+      data[rel] = fn((data[rel] || []).slice());
+      return before - data[rel].length;
+    },
   };
 }
 
@@ -18,36 +23,37 @@ function makeClient(overrides = {}) {
   const client = createNotificationsClient({
     readTSV: store.readTSV,
     appendTSV: store.appendTSV,
+    rewriteTSV: store.rewriteTSV,
     auditLog: { log: (event, data) => logs.push({ event, data }) },
     ...overrides,
   });
   return { client, store, logs };
 }
 
-test('createNotificationsClient throws without readTSV/appendTSV', () => {
+test('createNotificationsClient throws without readTSV/appendTSV/rewriteTSV', () => {
   assert.throws(() => createNotificationsClient({}));
 });
 
-test('notify() appends a new row and returns true', () => {
+test('notify() appends a new row and returns true', async () => {
   const { client, store } = makeClient();
-  const ok = client.notify({ source: 'tasks', kind: 'due-today', title: 'Ship the thing' });
+  const ok = await client.notify({ source: 'tasks', kind: 'due-today', title: 'Ship the thing' });
   assert.equal(ok, true);
   assert.equal(store.data['notifications.tsv'].length, 1);
   assert.equal(store.data['notifications.tsv'][0].STATUS, 'new');
 });
 
-test('notify() is deduped by DEDUPE_KEY -- a repeat notice is dropped, not appended twice', () => {
+test('notify() is deduped by DEDUPE_KEY -- a repeat notice is dropped, not appended twice', async () => {
   const { client, store } = makeClient();
-  client.notify({ source: 'tasks', kind: 'due-today', title: 'Ship the thing', dedupeKey: 'task-due:T1:2026-08-09' });
-  const second = client.notify({ source: 'tasks', kind: 'due-today', title: 'Ship the thing', dedupeKey: 'task-due:T1:2026-08-09' });
+  await client.notify({ source: 'tasks', kind: 'due-today', title: 'Ship the thing', dedupeKey: 'task-due:T1:2026-08-09' });
+  const second = await client.notify({ source: 'tasks', kind: 'due-today', title: 'Ship the thing', dedupeKey: 'task-due:T1:2026-08-09' });
   assert.equal(second, false);
   assert.equal(store.data['notifications.tsv'].length, 1);
 });
 
-test('notify() falls back to source:kind:title as the dedupe key when none is given', () => {
+test('notify() falls back to source:kind:title as the dedupe key when none is given', async () => {
   const { client, store } = makeClient();
-  client.notify({ source: 'x', kind: 'y', title: 'z' });
-  client.notify({ source: 'x', kind: 'y', title: 'z' });
+  await client.notify({ source: 'x', kind: 'y', title: 'z' });
+  await client.notify({ source: 'x', kind: 'y', title: 'z' });
   assert.equal(store.data['notifications.tsv'].length, 1);
 });
 
@@ -183,31 +189,31 @@ test('a repeat sweep raises nothing new -- dedupe holds across separate sweep ca
   assert.equal(second, 0);
 });
 
-test('listNotifications returns newest first and respects limit', () => {
+test('listNotifications returns newest first and respects limit', async () => {
   const { client } = makeClient();
-  client.notify({ source: 'a', kind: 'k', title: '1', dedupeKey: '1' });
-  client.notify({ source: 'a', kind: 'k', title: '2', dedupeKey: '2' });
-  client.notify({ source: 'a', kind: 'k', title: '3', dedupeKey: '3' });
-  const list = client.listNotifications({ limit: 2 });
+  await client.notify({ source: 'a', kind: 'k', title: '1', dedupeKey: '1' });
+  await client.notify({ source: 'a', kind: 'k', title: '2', dedupeKey: '2' });
+  await client.notify({ source: 'a', kind: 'k', title: '3', dedupeKey: '3' });
+  const list = await client.listNotifications({ limit: 2 });
   assert.equal(list.length, 2);
   assert.equal(list[0].TITLE, '3');
 });
 
-test('markSeen updates matching rows by id and stamps SEEN_AT', () => {
+test('markSeen updates matching rows by id and stamps SEEN_AT', async () => {
   const { client, store } = makeClient();
-  client.notify({ source: 'a', kind: 'k', title: 'one', dedupeKey: '1' });
+  await client.notify({ source: 'a', kind: 'k', title: 'one', dedupeKey: '1' });
   const id = store.data['notifications.tsv'][0].ID;
-  const { count } = client.markSeen({ ids: [id] });
+  const { count } = await client.markSeen({ ids: [id] });
   assert.equal(count, 1);
   assert.equal(store.data['notifications.tsv'][0].STATUS, 'seen');
   assert.notEqual(store.data['notifications.tsv'][0].SEEN_AT, '-');
 });
 
-test('markSeen with all:true marks every row regardless of id', () => {
+test('markSeen with all:true marks every row regardless of id', async () => {
   const { client, store } = makeClient();
-  client.notify({ source: 'a', kind: 'k', title: 'one', dedupeKey: '1' });
-  client.notify({ source: 'a', kind: 'k', title: 'two', dedupeKey: '2' });
-  const { count } = client.markSeen({ all: true });
+  await client.notify({ source: 'a', kind: 'k', title: 'one', dedupeKey: '1' });
+  await client.notify({ source: 'a', kind: 'k', title: 'two', dedupeKey: '2' });
+  const { count } = await client.markSeen({ all: true });
   assert.equal(count, 2);
   assert.ok(store.data['notifications.tsv'].every(r => r.STATUS === 'seen'));
 });

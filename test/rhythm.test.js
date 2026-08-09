@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { createRhythmClient, DEFAULT_HABITS, DEFAULT_INSIGHTS } = require('../lib/rhythm');
 
 function makeReadTSV(seed) {
-  return (rel) => (seed[rel] || []).slice();
+  return async (rel) => (seed[rel] || []).slice();
 }
 
 test('createRhythmClient throws without readTSV', () => {

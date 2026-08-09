@@ -29,10 +29,13 @@ const manifest = require('../lib/manifest');
 
 const PORT = parseInt(process.env.PULSE_PORT || process.env.PORT || '8082', 10);
 const BIND = process.env.PULSE_BIND || '127.0.0.1';
-const MEMORY_DIR = process.env.PULSE_MEMORY_DIR || process.env.VAULT_MEMORY_DIR || path.join(__dirname, '..', 'memory');
+const VAULT_URL = process.env.VAULT_URL || '';
 const LOGS_DIR = process.env.PULSE_LOGS_DIR || path.join(__dirname, '..', 'runtime', 'logs');
-const EVENTS_FILE = process.env.PULSE_EVENTS_FILE || path.join(MEMORY_DIR, 'scope', 'calendar_events.json');
-const RHYTHM_FILE = process.env.PULSE_RHYTHM_FILE || path.join(MEMORY_DIR, 'personal', 'rhythm.json');
+// Calendar events and rhythm state are still plain JSON files on pulse's own
+// disk, not vault-owned TSV rows -- only TSV data moved to the remote store.
+const LOCAL_DIR = process.env.PULSE_LOCAL_DIR || path.join(__dirname, '..', 'memory');
+const EVENTS_FILE = process.env.PULSE_EVENTS_FILE || path.join(LOCAL_DIR, 'scope', 'calendar_events.json');
+const RHYTHM_FILE = process.env.PULSE_RHYTHM_FILE || path.join(LOCAL_DIR, 'personal', 'rhythm.json');
 const REMINDED_FILE = process.env.PULSE_REMINDED_FILE || path.join(__dirname, '..', 'runtime', 'reminded.json');
 
 function readBody(req) {
@@ -76,8 +79,16 @@ async function main() {
   // -- 2. Audit log -------------------------------------------------------------
   const auditLog = createAuditLog({ logsDir: LOGS_DIR });
 
-  // -- 3. Local store (shares vault's memory/ dir on this host) ---------------
-  const store = createStore({ memoryDir: MEMORY_DIR, auditLog });
+  // -- 3. Remote store (HTTP client against vault) -----------------------------
+  if (!VAULT_URL) {
+    console.error('  REFUSING TO START: VAULT_URL is not configured -- pulse has no data store without it.');
+    process.exit(1);
+  }
+  const store = createStore({
+    baseUrl: VAULT_URL,
+    getToken: () => process.env.VAULT_TOKEN || secretStore.get('VAULT_TOKEN') || '',
+    auditLog,
+  });
   const readTSV = store.read, appendTSV = store.append, rewriteTSV = store.rewrite;
 
   // -- 4. Capability clients ---------------------------------------------------
@@ -128,7 +139,7 @@ async function main() {
   });
 
   const notifications = createNotificationsClient({
-    readTSV, appendTSV, auditLog,
+    readTSV, appendTSV, rewriteTSV, auditLog,
     githubApi: github.githubApi,
     wellspringRepo: process.env.ISCONL_WELLSPRING_REPO || '',
     wellspringSelf: process.env.ISCONL_WELLSPRING_SELF || '',
@@ -171,41 +182,41 @@ async function main() {
 
     try {
       if (pathname === '/finance/summary' && req.method === 'GET') {
-        return sendJson(res, 200, finance.summary());
+        return sendJson(res, 200, await finance.summary());
       }
       if (pathname === '/finance/accounts' && req.method === 'POST') {
-        return sendJson(res, 200, finance.upsertAccount(JSON.parse(await readBody(req) || '{}')));
+        return sendJson(res, 200, await finance.upsertAccount(JSON.parse(await readBody(req) || '{}')));
       }
       if (pathname === '/finance/transactions' && req.method === 'POST') {
-        return sendJson(res, 200, finance.addTransaction(JSON.parse(await readBody(req) || '{}')));
+        return sendJson(res, 200, await finance.addTransaction(JSON.parse(await readBody(req) || '{}')));
       }
       if (pathname === '/finance/incomes' && req.method === 'POST') {
-        return sendJson(res, 200, finance.upsertIncome(JSON.parse(await readBody(req) || '{}')));
+        return sendJson(res, 200, await finance.upsertIncome(JSON.parse(await readBody(req) || '{}')));
       }
       if (pathname === '/finance/ventures' && req.method === 'POST') {
-        return sendJson(res, 200, finance.upsertVenture(JSON.parse(await readBody(req) || '{}')));
+        return sendJson(res, 200, await finance.upsertVenture(JSON.parse(await readBody(req) || '{}')));
       }
 
       if (pathname === '/notifications' && req.method === 'GET') {
-        return sendJson(res, 200, { notifications: notifications.listNotifications({ limit: parseInt(url.searchParams.get('limit') || '100', 10) }) });
+        return sendJson(res, 200, { notifications: await notifications.listNotifications({ limit: parseInt(url.searchParams.get('limit') || '100', 10) }) });
       }
       if (pathname === '/notifications/sweep' && req.method === 'POST') {
         const raised = await notifications.notificationSweep({ deep: url.searchParams.get('deep') !== 'false' });
         return sendJson(res, 200, { success: true, raised });
       }
       if (pathname === '/notifications/seen' && req.method === 'POST') {
-        return sendJson(res, 200, { success: true, ...notifications.markSeen(JSON.parse(await readBody(req) || '{}')) });
+        return sendJson(res, 200, { success: true, ...(await notifications.markSeen(JSON.parse(await readBody(req) || '{}'))) });
       }
 
       if (pathname === '/dates' && req.method === 'GET') {
-        return sendJson(res, 200, dates.listDates());
+        return sendJson(res, 200, await dates.listDates());
       }
       if (pathname === '/dates' && req.method === 'POST') {
-        return sendJson(res, 200, dates.addDate(JSON.parse(await readBody(req) || '{}')));
+        return sendJson(res, 200, await dates.addDate(JSON.parse(await readBody(req) || '{}')));
       }
       if (pathname === '/dates/delete' && req.method === 'POST') {
         const p = JSON.parse(await readBody(req) || '{}');
-        return sendJson(res, 200, dates.deleteDate(p.id));
+        return sendJson(res, 200, await dates.deleteDate(p.id));
       }
       if (pathname === '/dates/remind' && req.method === 'POST') {
         return sendJson(res, 200, await dates.sendDueReminders());
@@ -243,7 +254,7 @@ async function main() {
         return sendJson(res, 200, { projects: await projects.listProjects() });
       }
       if (pathname === '/projects/url' && req.method === 'POST') {
-        return sendJson(res, 200, projects.setProjectUrl(JSON.parse(await readBody(req) || '{}')));
+        return sendJson(res, 200, await projects.setProjectUrl(JSON.parse(await readBody(req) || '{}')));
       }
 
       if (pathname === '/github/contributions' && req.method === 'GET') {

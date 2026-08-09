@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { createDataHealthClient } = require('../lib/data-health');
 
 function makeReadTSV(seed) {
-  return (rel) => (seed[rel] || []).slice();
+  return async (rel) => (seed[rel] || []).slice();
 }
 
 test('createDataHealthClient throws without readTSV', () => {

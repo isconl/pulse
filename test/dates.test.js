@@ -7,9 +7,9 @@ function makeStore(seed = {}) {
   const data = { ...seed };
   return {
     data,
-    readTSV: (rel) => (data[rel] || []).slice(),
-    appendTSV: (rel, row) => { (data[rel] = data[rel] || []).push(row); },
-    rewriteTSV: (rel, fn) => {
+    readTSV: async (rel) => (data[rel] || []).slice(),
+    appendTSV: async (rel, row) => { (data[rel] = data[rel] || []).push(row); return true; },
+    rewriteTSV: async (rel, fn) => {
       const before = (data[rel] || []).length;
       data[rel] = fn((data[rel] || []).slice());
       return before - data[rel].length;
@@ -21,21 +21,21 @@ test('createDatesClient throws without readTSV/appendTSV/rewriteTSV', () => {
   assert.throws(() => createDatesClient({}));
 });
 
-test('computeDates computes a yearly recurring milestone correctly', () => {
+test('computeDates computes a yearly recurring milestone correctly', async () => {
   const store = makeStore({ 'scope/dates.tsv': [{ ID: 'D001', TITLE: 'Birthday', DATE: '1990-08-09', KIND: 'birthday', RECURS: 'yearly' }] });
   const client = createDatesClient({ ...store });
-  const [d] = client.computeDates(new Date('2026-08-09T12:00:00'));
+  const [d] = await client.computeDates(new Date('2026-08-09T12:00:00'));
   assert.equal(d.yearsTurning, 36);
   assert.equal(d.milestones.some(m => m.label === 'turns 36'), true);
 });
 
-test('computeDates rolls a passed yearly date forward to next year', () => {
+test('computeDates rolls a passed yearly date forward to next year', async () => {
   const store = makeStore({ 'scope/dates.tsv': [{ ID: 'D001', TITLE: 'Anniversary', DATE: '2020-01-01', KIND: 'anniversary', RECURS: 'yearly' }] });
   const client = createDatesClient({ ...store });
   // A hardcoded ISO string here would be timezone-fragile (toISOString() renders
   // in UTC, local midnight can land on the previous UTC day) -- assert the
   // roll-forward happened via daysToNext/yearsTurning instead of an exact string.
-  const [d] = client.computeDates(new Date(2026, 7, 9, 12, 0, 0));
+  const [d] = await client.computeDates(new Date(2026, 7, 9, 12, 0, 0));
   // yearsTurning counts from the ORIGINAL date (2020), not "years from now" --
   // the 2020-01-01 anniversary due 2027-01-01 turns 7, not 1.
   assert.equal(d.yearsTurning, 7);
@@ -49,26 +49,26 @@ test('computeDates rolls a passed yearly date forward to next year', () => {
   // with a timezone-coupled assertion.
 });
 
-test('addDate rejects a malformed date or missing title', () => {
+test('addDate rejects a malformed date or missing title', async () => {
   const store = makeStore();
   const client = createDatesClient({ ...store });
-  assert.throws(() => client.addDate({ date: 'not-a-date', title: 'x' }));
-  assert.throws(() => client.addDate({ date: '2026-01-01', title: '' }));
+  await assert.rejects(() => client.addDate({ date: 'not-a-date', title: 'x' }));
+  await assert.rejects(() => client.addDate({ date: '2026-01-01', title: '' }));
 });
 
-test('addDate assigns a sequential zero-padded ID', () => {
+test('addDate assigns a sequential zero-padded ID', async () => {
   const store = makeStore({ 'scope/dates.tsv': [{ ID: 'D001' }] });
   const client = createDatesClient({ ...store });
-  const r = client.addDate({ date: '2026-01-01', title: 'New date' });
+  const r = await client.addDate({ date: '2026-01-01', title: 'New date' });
   assert.equal(r.id, 'D002');
 });
 
-test('deleteDate removes the matching row and reports success:false when nothing matched', () => {
+test('deleteDate removes the matching row and reports success:false when nothing matched', async () => {
   const store = makeStore({ 'scope/dates.tsv': [{ ID: 'D001', TITLE: 'x' }] });
   const client = createDatesClient({ ...store });
-  assert.equal(client.deleteDate('D001').success, true);
+  assert.equal((await client.deleteDate('D001')).success, true);
   assert.equal(store.data['scope/dates.tsv'].length, 0);
-  assert.equal(client.deleteDate('D999').success, false);
+  assert.equal((await client.deleteDate('D999')).success, false);
 });
 
 test('sendDueReminders fires at the 30/7/1/0-day tiers and not otherwise, deduped via the ledger', async () => {
