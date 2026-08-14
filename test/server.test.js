@@ -12,16 +12,37 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function startFakeVault(seed = {}) {
+function startFakeVault(seed = {}, rawSeed = {}) {
   const data = { ...seed };
+  const raw = { ...rawSeed };
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url, 'http://localhost');
-      const collection = decodeURIComponent(url.pathname.slice('/vault/'.length));
       let body = '';
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
         res.setHeader('Content-Type', 'application/json');
+
+        // Raw (non-TSV) collections -- same GET/PUT shape as /vault/:collection,
+        // for JSON/YAML state served as text rather than TSV rows.
+        if (url.pathname.startsWith('/vault-raw/')) {
+          const collection = decodeURIComponent(url.pathname.slice('/vault-raw/'.length));
+          if (req.method === 'GET') {
+            res.writeHead(200);
+            return res.end(JSON.stringify({ collection, text: raw[collection] || '' }));
+          }
+          if (req.method === 'PUT') {
+            let text = '';
+            try { text = JSON.parse(body || '{}').text || ''; } catch { /* ignore */ }
+            raw[collection] = text;
+            res.writeHead(200);
+            return res.end(JSON.stringify({ ok: true, collection, bytes: text.length }));
+          }
+          res.writeHead(404);
+          return res.end(JSON.stringify({ error: 'Not Found' }));
+        }
+
+        const collection = decodeURIComponent(url.pathname.slice('/vault/'.length));
         if (req.method === 'GET') {
           res.writeHead(200);
           return res.end(JSON.stringify({ collection, rows: data[collection] || [] }));
@@ -45,7 +66,7 @@ function startFakeVault(seed = {}) {
         res.end(JSON.stringify({ error: 'Not Found' }));
       });
     });
-    server.listen(0, '127.0.0.1', () => resolve({ server, data, port: server.address().port }));
+    server.listen(0, '127.0.0.1', () => resolve({ server, data, raw, port: server.address().port }));
   });
 }
 
@@ -69,8 +90,6 @@ async function startServer(envOverrides = {}, vaultSeed = {}) {
     PULSE_BIND: '127.0.0.1',
     VAULT_URL: `http://127.0.0.1:${vault.port}`, VAULT_TOKEN: 'vault-test-token',
     PULSE_LOGS_DIR: logsDir,
-    PULSE_EVENTS_FILE: path.join(localDir, 'scope', 'calendar_events.json'),
-    PULSE_RHYTHM_FILE: path.join(localDir, 'personal', 'rhythm.json'),
     PULSE_REMINDED_FILE: path.join(localDir, 'reminded.json'),
     PULSE_TOKEN: 'test-static-token',
     BWS_ACCESS_TOKEN: '',

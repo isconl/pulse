@@ -31,11 +31,11 @@ const PORT = parseInt(process.env.PULSE_PORT || process.env.PORT || '8082', 10);
 const BIND = process.env.PULSE_BIND || '127.0.0.1';
 const VAULT_URL = process.env.VAULT_URL || '';
 const LOGS_DIR = process.env.PULSE_LOGS_DIR || path.join(__dirname, '..', 'runtime', 'logs');
-// Calendar events and rhythm state are still plain JSON files on pulse's own
-// disk, not vault-owned TSV rows -- only TSV data moved to the remote store.
-const LOCAL_DIR = process.env.PULSE_LOCAL_DIR || path.join(__dirname, '..', 'memory');
-const EVENTS_FILE = process.env.PULSE_EVENTS_FILE || path.join(LOCAL_DIR, 'scope', 'calendar_events.json');
-const RHYTHM_FILE = process.env.PULSE_RHYTHM_FILE || path.join(LOCAL_DIR, 'personal', 'rhythm.json');
+// Reminded-state is pulse's own ephemeral bookkeeping (which reminders it has
+// already sent), not vault-owned data -- stays local. Calendar events and
+// rhythm state used to be plain local JSON files too (a known gap: broke the
+// moment pulse ran on a different host than vault), now go through vault's
+// /vault-raw/:collection, same as TSV data goes through /vault/:collection.
 const REMINDED_FILE = process.env.PULSE_REMINDED_FILE || path.join(__dirname, '..', 'runtime', 'reminded.json');
 
 function readBody(req) {
@@ -91,6 +91,16 @@ async function main() {
   });
   const readTSV = store.read, appendTSV = store.append, rewriteTSV = store.rewrite;
 
+  // JSON state read/write through vault's raw store, replacing the old
+  // local-file readEvents/writeEvents/readState/writeState below.
+  async function readRawJson(collection, fallback) {
+    try {
+      const text = await store.rawRead(collection);
+      return text ? JSON.parse(text) : fallback;
+    } catch { return fallback; }
+  }
+  const writeRawJson = (collection, data) => store.rawWrite(collection, JSON.stringify(data, null, 2));
+
   // -- 4. Capability clients ---------------------------------------------------
   const github = createGithubClient({
     getToken: () => secretStore.get('GITHUB_TOKEN') || '',
@@ -131,8 +141,8 @@ async function main() {
   // returned object afterwards would NOT reach the closure that actually uses it).
   let notifyFn = null;
   const calendar = createCalendarClient({
-    readEvents: () => readJsonFile(EVENTS_FILE, []),
-    writeEvents: (e) => writeJsonFile(EVENTS_FILE, e),
+    readEvents: () => readRawJson('scope/calendar_events.json', []),
+    writeEvents: (e) => writeRawJson('scope/calendar_events.json', e),
     auditLog,
     addTask: async (task) => appendTSV('scope/tasks.tsv', task),
     notify: (n) => notifyFn ? notifyFn(n) : false,
@@ -152,8 +162,8 @@ async function main() {
 
   const rhythm = createRhythmClient({
     readTSV,
-    readState: () => readJsonFile(RHYTHM_FILE, { habits: [], logs: {} }),
-    writeState: (s) => writeJsonFile(RHYTHM_FILE, s),
+    readState: () => readRawJson('personal/rhythm.json', { habits: [], logs: {} }),
+    writeState: (s) => writeRawJson('personal/rhythm.json', s),
   });
 
   const projects = createProjectsClient({ readTSV, rewriteTSV, auditLog });
