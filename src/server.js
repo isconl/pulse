@@ -64,7 +64,7 @@ async function writeJsonFile(fp, data) {
 
 /** Static-token check only -- pulse defers real login (TOTP/PIN/session) to vault; this just gates who may call pulse directly (hub, or a developer) with a shared credential. */
 function checkAuth(req) {
-  const token = process.env.PULSE_TOKEN || process.env.ISCONL_TOKEN || '';
+  const token = process.env.PULSE_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('PULSE_TOKEN') || '';
   if (!token) return false;
   const auth = req.headers.authorization || '';
   const provided = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -159,7 +159,7 @@ async function main() {
   const projects = createProjectsClient({ readTSV, rewriteTSV, auditLog });
 
   // -- 5. FAIL CLOSED bind guard (same rule as vault) --------------------------
-  const tokenConfigured = !!(process.env.PULSE_TOKEN || process.env.ISCONL_TOKEN);
+  const tokenConfigured = !!(process.env.PULSE_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('PULSE_TOKEN'));
   const isLoopback = ['127.0.0.1', '::1', 'localhost'].includes(BIND);
   if (!isLoopback && !tokenConfigured) {
     console.error('  REFUSING TO BIND: no PULSE_TOKEN/ISCONL_TOKEN configured and BIND is not loopback.');
