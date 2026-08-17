@@ -25,6 +25,7 @@ const { createCalendarClient } = require('../lib/calendar');
 const { createDataHealthClient } = require('../lib/data-health');
 const { createRhythmClient } = require('../lib/rhythm');
 const { createProjectsClient } = require('../lib/projects');
+const { createGraphClient } = require('../lib/graph');
 const manifest = require('../lib/manifest');
 
 const PORT = parseInt(process.env.PULSE_PORT || process.env.PORT || '8082', 10);
@@ -134,6 +135,31 @@ async function main() {
     writeReminded: (l) => writeJsonFile(REMINDED_FILE, l),
   });
 
+  // Microsoft Graph client, so calendar.listEvents() can actually merge in
+  // live Microsoft 365 events instead of only ever returning the local
+  // scope/calendar_events.json snapshot (found 17 Aug: createCalendarClient
+  // was wired with no graphRequest at all, so its M365 branch never ran --
+  // the calendar view had been stuck on whatever was last hand-imported,
+  // 2026-08-07, with nothing after that ever appearing. See task-backlog.md).
+  // Same credential-resolution pattern as vault/src/server.js's own Graph
+  // client -- MSGRAPH_* secrets are shared across the fleet in Bitwarden,
+  // each engine reads them independently, same as github.js's GITHUB_TOKEN.
+  let graphConfig = {
+    clientId: process.env.MSGRAPH_CLIENT_ID || secretStore.get('MSGRAPH_CLIENT_ID') || '',
+    clientSecret: process.env.MSGRAPH_CLIENT_SECRET || secretStore.get('MSGRAPH_CLIENT_SECRET') || '',
+    accessToken: process.env.MSGRAPH_ACCESS_TOKEN || '',
+    refreshToken: secretStore.get('MSGRAPH_REFRESH_TOKEN') || '',
+    tenantId: process.env.MSGRAPH_TENANT_ID || secretStore.get('MSGRAPH_TENANT_ID') || '',
+  };
+  const graph = createGraphClient({
+    getConfig: () => graphConfig,
+    setConfig: (patch) => { graphConfig = { ...graphConfig, ...patch }; },
+    onTokenRefreshed: async (accessToken, refreshToken) => {
+      await secretStore.persistSecret('MSGRAPH_REFRESH_TOKEN', refreshToken, 'Rotated by pulse on token refresh');
+    },
+    auditLog,
+  });
+
   // calendar.notify and notifications.fetchCalendarEvents/fetchDates each need
   // the OTHER module, which doesn't exist yet at this point -- broken via a
   // closure indirection assigned below, since each factory closes over its
@@ -144,6 +170,7 @@ async function main() {
     readEvents: () => readRawJson('scope/calendar_events.json', []),
     writeEvents: (e) => writeRawJson('scope/calendar_events.json', e),
     auditLog,
+    graphRequest: graph.graphRequest,
     addTask: async (task) => appendTSV('scope/tasks.tsv', task),
     notify: (n) => notifyFn ? notifyFn(n) : false,
   });
