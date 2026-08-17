@@ -270,6 +270,9 @@ async function main() {
       if (pathname === '/github/contributions' && req.method === 'GET') {
         return sendJson(res, 200, await github.getContributions({ force: url.searchParams.get('force') === 'true' }));
       }
+      if (pathname === '/github/snapshot' && req.method === 'GET') {
+        return sendJson(res, 200, await github.getSnapshot());
+      }
     } catch (e) {
       return sendJson(res, 400, { success: false, error: String(e.message || e) });
     }

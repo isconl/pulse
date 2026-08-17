@@ -37,6 +37,12 @@ test('getContributions caches across calls and persists to disk, surviving a fre
   assert.equal(result.totalContributions, 42);
 });
 
+test('getSnapshot degrades to null user / empty repos+notifications when no token is configured, rather than throwing', async () => {
+  const client = createGithubClient({ getToken: () => '' });
+  const snap = await client.getSnapshot();
+  assert.deepEqual(snap, { user: null, repos: [], notifications: [] });
+});
+
 test('runGhArgs resolves with success:false (not a throw) when gh is missing/fails', async () => {
   const client = createGithubClient({ getToken: () => '' });
   const result = await client.runGhArgs(['definitely-not-a-real-subcommand-xyz']);
