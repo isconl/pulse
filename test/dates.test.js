@@ -21,12 +21,52 @@ test('createDatesClient throws without readTSV/appendTSV/rewriteTSV', () => {
   assert.throws(() => createDatesClient({}));
 });
 
-test('computeDates computes a yearly recurring milestone correctly', async () => {
-  const store = makeStore({ 'scope/dates.tsv': [{ ID: 'D001', TITLE: 'Birthday', DATE: '1990-08-09', KIND: 'birthday', RECURS: 'yearly' }] });
+test('computeDates computes a yearly recurring milestone correctly for a non-birthday date (unaffected by BM26082001 gating)', async () => {
+  const store = makeStore({ 'scope/dates.tsv': [{ ID: 'D001', TITLE: 'Work anniversary', DATE: '1990-08-09', KIND: 'anniversary', RECURS: 'yearly' }] });
   const client = createDatesClient({ ...store });
   const [d] = await client.computeDates(new Date('2026-08-09T12:00:00'));
   assert.equal(d.yearsTurning, 36);
+  assert.equal(d.milestones.some(m => m.label === '36 years'), true);
+});
+
+test('computeDates (BM26082001): a birthday linked to the self-flagged person shows the full turns-X countdown', async () => {
+  const store = makeStore({
+    'circle/people.tsv': [{ ID: 'operator', NAME: 'Operator', IS_SELF: 'yes' }],
+    'scope/dates.tsv': [{ ID: 'D001', TITLE: 'My birthday', DATE: '1990-08-09', KIND: 'birthday', RECURS: 'yearly', PERSON_ID: 'operator' }],
+  });
+  const client = createDatesClient({ ...store });
+  const [d] = await client.computeDates(new Date('2026-08-09T12:00:00'));
+  assert.equal(d.yearsTurning, 36);
+  assert.equal(d.daysToNext, 0);
   assert.equal(d.milestones.some(m => m.label === 'turns 36'), true);
+});
+
+test('computeDates (BM26082001): a birthday linked to someone else hides yearsTurning/daysToNext, but keeps a normal recurrence and a non-age-revealing milestone', async () => {
+  const store = makeStore({
+    'circle/people.tsv': [
+      { ID: 'operator', NAME: 'Operator', IS_SELF: 'yes' },
+      { ID: 'alex', NAME: 'Alex Rivera', IS_SELF: 'no' },
+    ],
+    'scope/dates.tsv': [{ ID: 'D002', TITLE: "Alex's birthday", DATE: '1985-08-09', KIND: 'birthday', RECURS: 'yearly', PERSON_ID: 'alex' }],
+  });
+  const client = createDatesClient({ ...store });
+  const [d] = await client.computeDates(new Date('2026-08-09T12:00:00'));
+  assert.equal(d.yearsTurning, undefined);
+  assert.equal(d.daysToNext, undefined);
+  assert.ok(d.nextOccurrence, 'still behaves as a normal recurring event');
+  assert.equal(d.milestones[0].label, 'birthday');
+  assert.equal(d.milestones[0].days, 0, 'the milestone itself (days/date) is unaffected, only its label loses the age');
+});
+
+test('computeDates (BM26082001): a birthday with no PERSON_ID link at all is treated as non-self (never guesses)', async () => {
+  const store = makeStore({
+    'circle/people.tsv': [{ ID: 'operator', NAME: 'Operator', IS_SELF: 'yes' }],
+    'scope/dates.tsv': [{ ID: 'D003', TITLE: 'Unlinked birthday', DATE: '1990-08-09', KIND: 'birthday', RECURS: 'yearly' }],
+  });
+  const client = createDatesClient({ ...store });
+  const [d] = await client.computeDates(new Date('2026-08-09T12:00:00'));
+  assert.equal(d.yearsTurning, undefined);
+  assert.equal(d.milestones[0].label, 'birthday');
 });
 
 test('computeDates rolls a passed yearly date forward to next year', async () => {
@@ -94,4 +134,20 @@ test('sendDueReminders fires at the 30/7/1/0-day tiers and not otherwise, dedupe
   const second = await client.sendDueReminders(today);
   assert.equal(second.sent, 0);
   assert.equal(sent.length, 1);
+});
+
+test('sendDueReminders (BM26082001): a non-self birthday still fires the 30/7/1/0 cascade unchanged, without naming the age', async () => {
+  const today = new Date(2026, 7, 9, 0, 0, 0);
+  const future = new Date(today.getTime() + 7 * 864e5);
+  const mmdd = `${String(future.getMonth() + 1).padStart(2, '0')}-${String(future.getDate()).padStart(2, '0')}`;
+  const store = makeStore({
+    'circle/people.tsv': [{ ID: 'alex', NAME: 'Alex Rivera', IS_SELF: 'no' }],
+    'scope/dates.tsv': [{ ID: 'D001', TITLE: "Alex's birthday", DATE: `1985-${mmdd}`, KIND: 'birthday', RECURS: 'yearly', PERSON_ID: 'alex' }],
+  });
+  const sent = [];
+  const client = createDatesClient({ ...store, sendReminder: async (msg) => sent.push(msg), readReminded: async () => ({}), writeReminded: async () => {} });
+  const r = await client.sendDueReminders(today);
+  assert.equal(r.sent, 1, 'reminder cascade fires exactly the same as for any other birthday');
+  assert.match(sent[0], /Alex's birthday - birthday on/);
+  assert.doesNotMatch(sent[0], /turns \d/, 'the reminder text never reveals the age for a non-self birthday');
 });
