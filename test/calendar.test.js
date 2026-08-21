@@ -126,3 +126,61 @@ test('deleteEvent removes the matching event by id', async () => {
   assert.equal(store.events.length, 1);
   assert.equal(store.events[0].id, '2');
 });
+
+test('exportIcs produces a valid VCALENDAR wrapping one VEVENT per local event with a date', async () => {
+  const store = makeEventStore([
+    { id: '1', title: 'Team sync', date: '2026-08-25', time: '14:30', location: 'Zoom' },
+    { id: '2', title: 'No date, skipped' },
+  ]);
+  const client = createCalendarClient({ readEvents: store.readEvents, writeEvents: store.writeEvents });
+  const ics = await client.exportIcs();
+  assert.match(ics, /^BEGIN:VCALENDAR\r\nVERSION:2\.0/);
+  assert.match(ics, /END:VCALENDAR$/);
+  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 1);
+  assert.match(ics, /SUMMARY:Team sync/);
+  assert.match(ics, /DTSTART:20260825T143000/);
+  assert.match(ics, /LOCATION:Zoom/);
+});
+
+test('exportIcs renders an all-day event (no time) with DTSTART;VALUE=DATE', async () => {
+  const store = makeEventStore([{ id: '1', title: 'Deadline', date: '2026-09-01' }]);
+  const client = createCalendarClient({ readEvents: store.readEvents, writeEvents: store.writeEvents });
+  const ics = await client.exportIcs();
+  assert.match(ics, /DTSTART;VALUE=DATE:20260901/);
+});
+
+test('exportIcs escapes RFC5545-significant characters in SUMMARY', async () => {
+  const store = makeEventStore([{ id: '1', title: 'Comma, semicolon; back\\slash', date: '2026-09-01' }]);
+  const client = createCalendarClient({ readEvents: store.readEvents, writeEvents: store.writeEvents });
+  const ics = await client.exportIcs();
+  assert.ok(ics.includes('SUMMARY:Comma\\, semicolon\\; back\\\\slash'));
+});
+
+test('exportIcs (BT26082004) turns scope/dates.tsv RECURS:yearly rows into RRULE:FREQ=YEARLY VEVENTs', async () => {
+  const store = makeEventStore();
+  const readDates = async () => [
+    { ID: 'D001', TITLE: "Alex's birthday", DATE: '1985-03-14', KIND: 'birthday', RECURS: 'yearly' },
+    { ID: 'D002', TITLE: 'One-time thing', DATE: '2026-05-05', KIND: 'anniversary', RECURS: '-' },
+  ];
+  const client = createCalendarClient({ readEvents: store.readEvents, writeEvents: store.writeEvents, readDates });
+  const ics = await client.exportIcs();
+  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 1, 'only the yearly-recurring row is exported');
+  assert.match(ics, /SUMMARY:Alex's birthday/);
+  assert.match(ics, /RRULE:FREQ=YEARLY/);
+  assert.doesNotMatch(ics, /One-time thing/);
+});
+
+test('exportIcs never includes a computed age -- SUMMARY is the dates.tsv TITLE verbatim, matching BM26082001\'s privacy gating', async () => {
+  const store = makeEventStore();
+  const readDates = async () => [{ ID: 'D001', TITLE: "Someone's birthday", DATE: '1985-03-14', KIND: 'birthday', RECURS: 'yearly', PERSON_ID: 'someone-else' }];
+  const client = createCalendarClient({ readEvents: store.readEvents, writeEvents: store.writeEvents, readDates });
+  const ics = await client.exportIcs();
+  assert.doesNotMatch(ics, /turns \d/i);
+});
+
+test('exportIcs works local-events-only when readDates is not injected', async () => {
+  const store = makeEventStore([{ id: '1', title: 'x', date: '2026-09-01' }]);
+  const client = createCalendarClient({ readEvents: store.readEvents, writeEvents: store.writeEvents });
+  const ics = await client.exportIcs();
+  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 1);
+});

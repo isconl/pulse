@@ -173,6 +173,7 @@ async function main() {
     graphRequest: graph.graphRequest,
     addTask: async (task) => appendTSV('scope/tasks.tsv', task),
     notify: (n) => notifyFn ? notifyFn(n) : false,
+    readDates: () => readTSV('scope/dates.tsv'),
   });
 
   const notifications = createNotificationsClient({
@@ -271,6 +272,13 @@ async function main() {
       }
       if (pathname === '/calendar/import' && req.method === 'POST') {
         return sendJson(res, 200, await calendar.importEvents(JSON.parse(await readBody(req) || '{}')));
+      }
+      if (pathname === '/calendar/export' && req.method === 'GET') {
+        // JSON-wrapped raw text (not a text/calendar response) -- same
+        // pattern the Writer download flow already uses (base64 JSON,
+        // client builds the Blob) rather than introducing a second
+        // response shape into this engine.
+        return sendJson(res, 200, { ok: true, ics: await calendar.exportIcs() });
       }
 
       if (pathname === '/health/data' && req.method === 'GET') {
