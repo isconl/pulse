@@ -118,6 +118,38 @@ test('listEvents swallows a graphRequest failure and returns local events only',
   assert.equal(events.length, 1);
 });
 
+test('listEvents merges local events with googleCalendarFetch when configured', async () => {
+  const store = makeEventStore([{ id: '1', title: 'Local one', date: '2026-08-10' }]);
+  const client = createCalendarClient({
+    readEvents: store.readEvents, writeEvents: store.writeEvents,
+    googleCalendarFetch: async () => [{ id: 'g1', title: 'Google event', date: '2026-08-12', time: '09:00', source: 'google', location: '' }],
+  });
+  const events = await client.listEvents();
+  assert.equal(events.length, 2);
+  assert.equal(events[1].source, 'google');
+});
+
+test('listEvents merges local + microsoft + google all together when both are configured', async () => {
+  const store = makeEventStore([{ id: '1', title: 'Local one', date: '2026-08-10' }]);
+  const client = createCalendarClient({
+    readEvents: store.readEvents, writeEvents: store.writeEvents,
+    graphRequest: async () => ({ data: { value: [{ id: 'ms1', subject: 'MS event', start: { dateTime: '2026-08-11T10:00:00' } }] } }),
+    googleCalendarFetch: async () => [{ id: 'g1', title: 'Google event', date: '2026-08-12', time: '09:00', source: 'google', location: '' }],
+  });
+  const events = await client.listEvents();
+  assert.equal(events.length, 3);
+});
+
+test('listEvents swallows a googleCalendarFetch failure and returns local events only', async () => {
+  const store = makeEventStore([{ id: '1', title: 'Local one', date: '2026-08-10' }]);
+  const client = createCalendarClient({
+    readEvents: store.readEvents, writeEvents: store.writeEvents,
+    googleCalendarFetch: async () => { throw new Error('vault down'); },
+  });
+  const events = await client.listEvents();
+  assert.equal(events.length, 1);
+});
+
 test('deleteEvent removes the matching event by id', async () => {
   const store = makeEventStore([{ id: '1', title: 'x' }, { id: '2', title: 'y' }]);
   const client = createCalendarClient({ readEvents: store.readEvents, writeEvents: store.writeEvents });
