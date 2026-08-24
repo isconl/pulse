@@ -165,6 +165,41 @@ async function main() {
   // closure indirection assigned below, since each factory closes over its
   // `notify` param at construction time (reassigning a property on the
   // returned object afterwards would NOT reach the closure that actually uses it).
+  // BG26082005: one raw HTTP call to vault's own /google/calendar per
+  // connected account label -- same GOOGLE_ACCOUNTS env var vault itself
+  // reads, so a label only needs registering once, not twice. Fails soft
+  // per-account (a not-yet-signed-in label 401s, skipped, not thrown) and
+  // overall (a vault outage degrades to no Google events, same as
+  // graphRequest's own try/catch above), never blocks the local-events
+  // merge listEvents() already guarantees.
+  const GOOGLE_CALENDAR_ACCOUNTS = (process.env.GOOGLE_ACCOUNTS || '').split(',').map(s => s.trim()).filter(Boolean);
+  async function fetchOneGoogleCalendar(account) {
+    return new Promise((resolve) => {
+      const url = new URL(`/google/calendar?account=${encodeURIComponent(account)}`, VAULT_URL);
+      const lib = url.protocol === 'https:' ? require('https') : http;
+      const req = lib.request(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${process.env.VAULT_TOKEN || secretStore.get('VAULT_TOKEN') || ''}` },
+      }, (res) => {
+        let raw = '';
+        res.on('data', (c) => { raw += c; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(raw);
+            resolve(parsed.ok ? parsed.events : []);
+          } catch { resolve([]); }
+        });
+      });
+      req.on('error', () => resolve([]));
+      req.end();
+    });
+  }
+  async function fetchGoogleCalendarEvents() {
+    if (!GOOGLE_CALENDAR_ACCOUNTS.length) return [];
+    const results = await Promise.all(GOOGLE_CALENDAR_ACCOUNTS.map(fetchOneGoogleCalendar));
+    return results.flat();
+  }
+
   let notifyFn = null;
   const calendar = createCalendarClient({
     readEvents: () => readRawJson('scope/calendar_events.json', []),
@@ -174,6 +209,7 @@ async function main() {
     addTask: async (task) => appendTSV('scope/tasks.tsv', task),
     notify: (n) => notifyFn ? notifyFn(n) : false,
     readDates: () => readTSV('scope/dates.tsv'),
+    googleCalendarFetch: fetchGoogleCalendarEvents,
   });
 
   const notifications = createNotificationsClient({
