@@ -23,7 +23,12 @@ const { createAuditLog } = require('../lib/audit');
 
 const NON_ROTATABLE = new Set([
   'JIRA_EMAIL', 'JIRA_HOST', 'JIRA_PROJECT', 'GITHUB_OWNER',
-  'ISCONL_TELEGRAM_CHAT_ID', 'MSGRAPH_TENANT_ID', 'VAULT_SYNC_INTERVAL_MS',
+  'ISCONL_TELEGRAM_CHAT_ID', 'MSGRAPH_TENANT_ID',
+  // BI26083005: VAULT_SYNC_INTERVAL_MS renamed VAULT_BACKUP_INTERVAL_MS
+  // (OneDrive is backup-only now). Kept both here -- the old Bitwarden
+  // secret is left in place, not deleted (config value, not a real
+  // secret; harmless orphan) -- until a deliberate cleanup pass removes it.
+  'VAULT_SYNC_INTERVAL_MS', 'VAULT_BACKUP_INTERVAL_MS',
   'MSGRAPH_CLIENT_ID', 'GOOGLE_CLIENT_ID',
 ]);
 
