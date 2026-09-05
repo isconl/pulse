@@ -331,6 +331,25 @@ async function main() {
         return sendJson(res, 200, await rhythm.getInsights());
       }
 
+      // BA26090501: Sconl's own CV/resume/portfolio links, phase 1 (simple
+      // curated list) -- same readRawJson/writeRawJson('personal/*.json')
+      // pattern as rhythm above, no dedicated lib module needed for a plain
+      // list. Phase 2 (a real "live portfolio" product) is a future,
+      // separate build, not scoped here.
+      if (pathname === '/portfolio' && req.method === 'GET') {
+        return sendJson(res, 200, await readRawJson('personal/portfolio.json', { items: [] }));
+      }
+      if (pathname === '/portfolio' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const items = Array.isArray(body.items) ? body.items.map(it => ({
+          title: String(it.title || '').trim(),
+          url: String(it.url || '').trim(),
+          note: String(it.note || '').trim(),
+        })).filter(it => it.title && it.url) : [];
+        await writeRawJson('personal/portfolio.json', { items });
+        return sendJson(res, 200, { ok: true, items });
+      }
+
       if (pathname === '/projects' && req.method === 'GET') {
         return sendJson(res, 200, { projects: await projects.listProjects() });
       }
