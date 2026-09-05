@@ -64,7 +64,14 @@ async function writeJsonFile(fp, data) {
 }
 
 /** Static-token check only -- pulse defers real login (TOTP/PIN/session) to vault; this just gates who may call pulse directly (hub, or a developer) with a shared credential. */
+let _devAuthBypassLog = null; // set once main() creates auditLog; used by ISCONL_DEV_NO_AUTH (BS26090501)
+
 function checkAuth(req) {
+  // BS26090501: dev-only, loopback-gated (enforced at boot below), env-only -- never request-derived.
+  if (process.env.ISCONL_DEV_NO_AUTH === '1') {
+    if (_devAuthBypassLog) _devAuthBypassLog.log('dev_auth_bypass', { engine: 'pulse', path: req.url });
+    return true;
+  }
   const token = process.env.PULSE_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('PULSE_TOKEN') || '';
   if (!token) return false;
   const auth = req.headers.authorization || '';
@@ -79,6 +86,7 @@ async function main() {
 
   // -- 2. Audit log -------------------------------------------------------------
   const auditLog = createAuditLog({ logsDir: LOGS_DIR });
+  _devAuthBypassLog = auditLog;
 
   // -- 3. Remote store (HTTP client against vault) -----------------------------
   if (!VAULT_URL) {
@@ -235,6 +243,10 @@ async function main() {
   // -- 5. FAIL CLOSED bind guard (same rule as vault) --------------------------
   const tokenConfigured = !!(process.env.PULSE_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('PULSE_TOKEN'));
   const isLoopback = ['127.0.0.1', '::1', 'localhost'].includes(BIND);
+  if (process.env.ISCONL_DEV_NO_AUTH === '1' && !isLoopback) {
+    console.error('  REFUSING TO BIND: ISCONL_DEV_NO_AUTH is set but BIND is not loopback -- dev auth bypass is loopback-only.');
+    process.exit(1);
+  }
   if (!isLoopback && !tokenConfigured) {
     console.error('  REFUSING TO BIND: no PULSE_TOKEN/ISCONL_TOKEN configured and BIND is not loopback.');
     process.exit(1);
