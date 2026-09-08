@@ -163,6 +163,99 @@ test('upsertVenture requires a name for a new venture and clears its metrics cac
   assert.equal(store.data['finance/ventures.tsv'].length, 1);
 });
 
+test('upsertVenture writes RENDER_URL/FOLDER/GITHUB/CATEGORY on create, and never touches a real value on an edit that omits them (BN26090610 regression)', async () => {
+  const store = makeStore();
+  const client = createFinanceClient(store);
+  const { id } = await client.upsertVenture({
+    name: 'Keyvanos', category: 'product', folder: 'acexoft-dynamics/design-studio', github: 'sconl/keyvanos', renderUrl: 'https://keyvanos.onrender.com',
+  });
+  let row = store.data['finance/ventures.tsv'].find(r => r.ID === id);
+  assert.equal(row.CATEGORY, 'product');
+  assert.equal(row.FOLDER, 'acexoft-dynamics/design-studio');
+  assert.equal(row.GITHUB, 'sconl/keyvanos');
+  assert.equal(row.RENDER_URL, 'https://keyvanos.onrender.com');
+
+  // Editing only the name (the old bug's exact repro: a field-only edit
+  // used to full-row-replace and silently wipe the other four columns
+  // back to '-') must leave category/folder/github/renderUrl untouched.
+  await client.upsertVenture({ id, name: 'Keyvanos Renamed' });
+  row = store.data['finance/ventures.tsv'].find(r => r.ID === id);
+  assert.equal(row.NAME, 'Keyvanos Renamed');
+  assert.equal(row.CATEGORY, 'product');
+  assert.equal(row.FOLDER, 'acexoft-dynamics/design-studio');
+  assert.equal(row.GITHUB, 'sconl/keyvanos');
+  assert.equal(row.RENDER_URL, 'https://keyvanos.onrender.com');
+});
+
+test('upsertVenture never guesses CATEGORY -- a new venture created with no category stays "-"', async () => {
+  const store = makeStore();
+  const client = createFinanceClient(store);
+  const { id } = await client.upsertVenture({ name: 'Mystery Co' });
+  const row = store.data['finance/ventures.tsv'].find(r => r.ID === id);
+  assert.equal(row.CATEGORY, '-');
+});
+
+test('deleteVenture removes the row and rejects an unknown id', async () => {
+  const store = makeStore({ 'finance/ventures.tsv': [{ ID: 'v1', NAME: 'A', CATEGORY: '-' }] });
+  const client = createFinanceClient(store);
+  await assert.rejects(() => client.deleteVenture('nope'), /No venture nope/);
+  const result = await client.deleteVenture('v1');
+  assert.deepEqual(result, { success: true, id: 'v1' });
+  assert.equal(store.data['finance/ventures.tsv'].length, 0);
+});
+
+test('ingestDiscoveredVentures reuses an empty placeholder row rather than appending a dead one alongside it', async () => {
+  const store = makeStore({
+    'finance/ventures.tsv': [
+      { ID: '-', NAME: '-', KIND: '-', ANALYTICS_URL: '-', AUTH_SECRET: '-', STATUS: '-', NOTE: '-', RENDER_URL: '-', FOLDER: '-', GITHUB: '-', CATEGORY: '-' },
+    ],
+  });
+  const client = createFinanceClient(store);
+  const result = await client.ingestDiscoveredVentures([{ folder: 'acexoft-capital', name: 'Acexoft Capital' }]);
+  assert.equal(result.created.length, 1);
+  assert.equal(store.data['finance/ventures.tsv'].length, 1); // reused, not appended
+  const row = store.data['finance/ventures.tsv'][0];
+  assert.equal(row.NAME, 'Acexoft Capital');
+  assert.equal(row.FOLDER, 'acexoft-capital');
+  assert.equal(row.CATEGORY, '-'); // never guessed
+  assert.notEqual(row.ID, '-');
+});
+
+test('ingestDiscoveredVentures appends when no empty slot is available', async () => {
+  const store = makeStore({ 'finance/ventures.tsv': [{ ID: 'v1', NAME: 'Existing', FOLDER: '-', CATEGORY: 'portfolio' }] });
+  const client = createFinanceClient(store);
+  const result = await client.ingestDiscoveredVentures([{ folder: 'acexoft-foundation', name: 'Acexoft Foundation' }]);
+  assert.equal(result.created.length, 1);
+  assert.equal(store.data['finance/ventures.tsv'].length, 2);
+});
+
+test('ingestDiscoveredVentures skips a folder already known on a real row, and never touches that row', async () => {
+  const store = makeStore({
+    'finance/ventures.tsv': [{ ID: 'v1', NAME: 'Acexoft Capital', FOLDER: 'acexoft-capital', CATEGORY: 'platform', KIND: 'holding' }],
+  });
+  const client = createFinanceClient(store);
+  const result = await client.ingestDiscoveredVentures([{ folder: 'acexoft-capital', name: 'Acexoft Capital' }]);
+  assert.equal(result.created.length, 0);
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped[0].reason, 'already known');
+  const row = store.data['finance/ventures.tsv'][0];
+  assert.equal(row.CATEGORY, 'platform'); // untouched -- Sconl's own assignment survives a re-run
+  assert.equal(row.KIND, 'holding');
+});
+
+test('ingestDiscoveredVentures is additive across two runs -- a second pass with an overlapping + a new candidate only adds the new one', async () => {
+  const store = makeStore({ 'finance/ventures.tsv': [] });
+  const client = createFinanceClient(store);
+  await client.ingestDiscoveredVentures([{ folder: 'acexoft-capital', name: 'Acexoft Capital' }]);
+  const second = await client.ingestDiscoveredVentures([
+    { folder: 'acexoft-capital', name: 'Acexoft Capital' }, // re-seen, already known
+    { folder: 'acexoft-foundation', name: 'Acexoft Foundation' }, // new
+  ]);
+  assert.equal(second.created.length, 1);
+  assert.equal(second.skipped.length, 1);
+  assert.equal(store.data['finance/ventures.tsv'].length, 2);
+});
+
 test('listVentures fetches flat scalar metrics only, dropping nested objects, and reports a timeout distinctly', async () => {
   const store = makeStore({ 'finance/ventures.tsv': [
     { ID: 'v1', NAME: 'A', ANALYTICS_URL: 'https://a.example/metrics', STATUS: 'active', AUTH_SECRET: '-' },

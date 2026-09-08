@@ -279,8 +279,23 @@ async function main() {
       if (pathname === '/finance/incomes' && req.method === 'POST') {
         return sendJson(res, 200, await finance.upsertIncome(JSON.parse(await readBody(req) || '{}')));
       }
+      if (pathname === '/finance/ventures' && req.method === 'GET') {
+        return sendJson(res, 200, { ventures: await finance.listVentures({ force: url.searchParams.get('refresh') === '1' }) });
+      }
       if (pathname === '/finance/ventures' && req.method === 'POST') {
         return sendJson(res, 200, await finance.upsertVenture(JSON.parse(await readBody(req) || '{}')));
+      }
+      if (pathname === '/finance/ventures/delete' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await finance.deleteVenture(body.id));
+      }
+      // BN26090610: additive-only ingest target for
+      // vault/lib/ventures-discovery.js's OneDrive _ace scan -- mirrors
+      // circle's /career/orgs/discover (same discover-then-push shape).
+      if (pathname === '/finance/ventures/discover-ingest' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const ventures = Array.isArray(body.ventures) ? body.ventures : [];
+        return sendJson(res, 200, await finance.ingestDiscoveredVentures(ventures));
       }
 
       if (pathname === '/notifications' && req.method === 'GET') {
