@@ -390,3 +390,40 @@ test('drivePull pushes a nonempty local file up when the remote has nothing yet'
   await new Promise(r => setTimeout(r, 10)); // fire-and-forget push
   assert.ok(pushed.some(p => p.includes('accounts.tsv')));
 });
+
+test('upsertPossession requires an item for a new possession but not for updating an existing one', async () => {
+  const store = makeStore();
+  const client = createFinanceClient(store);
+  await assert.rejects(() => client.upsertPossession({}), /item required/);
+  const { id } = await client.upsertPossession({ item: 'MacBook Pro', category: 'electronics', value: 250000 });
+  await client.upsertPossession({ id, condition: 'good' });
+});
+
+test('upsertPossession creates then updates in place by id, keeping one row per possession', async () => {
+  const store = makeStore();
+  const client = createFinanceClient(store);
+  const created = await client.upsertPossession({ item: 'Watch', category: 'jewelry', value: 50000 });
+  assert.equal(created.created, true);
+  const updated = await client.upsertPossession({ id: created.id, value: 45000 });
+  assert.equal(updated.created, false);
+  assert.equal(store.data['finance/possessions.tsv'].length, 1);
+  assert.equal(store.data['finance/possessions.tsv'][0].VALUE, '45000');
+});
+
+test('listPossessions returns the raw rows', async () => {
+  const store = makeStore();
+  const client = createFinanceClient(store);
+  await client.upsertPossession({ item: 'Camera', category: 'electronics', value: 80000 });
+  const rows = await client.listPossessions();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].ITEM, 'Camera');
+});
+
+test('deletePossession removes the row, throws for an unknown id', async () => {
+  const store = makeStore();
+  const client = createFinanceClient(store);
+  const { id } = await client.upsertPossession({ item: 'Chair', category: 'furniture', value: 15000 });
+  await client.deletePossession(id);
+  assert.equal((await client.listPossessions()).length, 0);
+  await assert.rejects(() => client.deletePossession('nope'), /No possession/);
+});

@@ -336,6 +336,16 @@ async function main() {
         const ventures = Array.isArray(body.ventures) ? body.ventures : [];
         return sendJson(res, 200, await finance.ingestDiscoveredVentures(ventures));
       }
+      if (pathname === '/finance/possessions' && req.method === 'GET') {
+        return sendJson(res, 200, { possessions: await finance.listPossessions() });
+      }
+      if (pathname === '/finance/possessions' && req.method === 'POST') {
+        return sendJson(res, 200, await finance.upsertPossession(JSON.parse(await readBody(req) || '{}')));
+      }
+      if (pathname === '/finance/possessions/delete' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await finance.deletePossession(body.id));
+      }
 
       if (pathname === '/notifications' && req.method === 'GET') {
         return sendJson(res, 200, { notifications: await notifications.listNotifications({ limit: parseInt(url.searchParams.get('limit') || '100', 10) }) });
