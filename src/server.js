@@ -20,6 +20,7 @@ const { createTelegramBot } = require('../lib/telegram');
 const { createBufferClient } = require('../lib/buffer');
 const { createFinanceClient } = require('../lib/finance');
 const { createNotificationsClient } = require('../lib/notifications');
+const { createNewsClient } = require('../lib/news');
 const { createDatesClient } = require('../lib/dates');
 const { createCalendarClient } = require('../lib/calendar');
 const { createDataHealthClient } = require('../lib/data-health');
@@ -230,6 +231,44 @@ async function main() {
   });
   notifyFn = notifications.notify;
 
+  // circle owns career/_active.yaml (the corporate-engagement org list) --
+  // reached over HTTP via circle's own GET /career?all=1, same
+  // cross-engine discipline as notifications.js's fetchJiraIssues/
+  // fetchVaultStatus (an injected fetcher, never a direct disk read of
+  // another engine's repo). Degrades to [] when CIRCLE_URL isn't
+  // configured, same fail-soft default as every other optional source.
+  const CIRCLE_URL = process.env.CIRCLE_URL || '';
+  async function fetchCareerOrgs() {
+    if (!CIRCLE_URL) return [];
+    return new Promise((resolve) => {
+      const url = new URL('/career?all=1', CIRCLE_URL);
+      const lib = url.protocol === 'https:' ? require('https') : http;
+      const req = lib.request(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${process.env.CIRCLE_TOKEN || process.env.ISCONL_TOKEN || secretStore.get('CIRCLE_TOKEN') || ''}` },
+      }, (res) => {
+        let raw = '';
+        res.on('data', (c) => { raw += c; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(raw);
+            resolve(Array.isArray(parsed.orgs) ? parsed.orgs : []);
+          } catch { resolve([]); }
+        });
+      });
+      req.on('error', () => resolve([]));
+      req.end();
+    });
+  }
+
+  const news = createNewsClient({
+    notify: notifications.notify,
+    telegramSend: (text) => telegram.send(text),
+    getSecret: (name) => secretStore.get(name) || null,
+    fetchCareerOrgs,
+    auditLog,
+  });
+
   const dataHealth = createDataHealthClient({ readTSV });
 
   const rhythm = createRhythmClient({
@@ -297,6 +336,16 @@ async function main() {
         const ventures = Array.isArray(body.ventures) ? body.ventures : [];
         return sendJson(res, 200, await finance.ingestDiscoveredVentures(ventures));
       }
+      if (pathname === '/finance/possessions' && req.method === 'GET') {
+        return sendJson(res, 200, { possessions: await finance.listPossessions() });
+      }
+      if (pathname === '/finance/possessions' && req.method === 'POST') {
+        return sendJson(res, 200, await finance.upsertPossession(JSON.parse(await readBody(req) || '{}')));
+      }
+      if (pathname === '/finance/possessions/delete' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, await finance.deletePossession(body.id));
+      }
 
       if (pathname === '/notifications' && req.method === 'GET') {
         return sendJson(res, 200, { notifications: await notifications.listNotifications({ limit: parseInt(url.searchParams.get('limit') || '100', 10) }) });
@@ -342,6 +391,34 @@ async function main() {
         // client builds the Blob) rather than introducing a second
         // response shape into this engine.
         return sendJson(res, 200, { ok: true, ics: await calendar.exportIcs() });
+      }
+
+      if (pathname === '/news/competitors' && req.method === 'GET') {
+        return sendJson(res, 200, { competitors: news.listCompetitors() });
+      }
+      if (pathname === '/news/competitors' && req.method === 'POST') {
+        return sendJson(res, 200, news.upsertCompetitor(JSON.parse(await readBody(req) || '{}')));
+      }
+      if (pathname === '/news/competitors/delete' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, news.deleteCompetitor(p.id));
+      }
+      if (pathname === '/news/topics' && req.method === 'GET') {
+        return sendJson(res, 200, { topics: news.listTopics() });
+      }
+      if (pathname === '/news/topics' && req.method === 'POST') {
+        return sendJson(res, 200, news.upsertTopic(JSON.parse(await readBody(req) || '{}')));
+      }
+      if (pathname === '/news/topics/delete' && req.method === 'POST') {
+        const p = JSON.parse(await readBody(req) || '{}');
+        return sendJson(res, 200, news.deleteTopic(p.id));
+      }
+      if (pathname === '/news/terms' && req.method === 'GET') {
+        return sendJson(res, 200, { terms: await news.listQueryTerms() });
+      }
+      if (pathname === '/news/sweep' && req.method === 'POST') {
+        const raised = await news.runNewsSweep({ deep: url.searchParams.get('deep') !== 'false' });
+        return sendJson(res, 200, { success: true, raised });
       }
 
       if (pathname === '/health/data' && req.method === 'GET') {
@@ -401,7 +478,7 @@ async function main() {
     server.listen(PORT, BIND, () => {
       const actualPort = server.address().port;
       console.log(`  pulse listening on ${BIND}:${actualPort}`);
-      resolve({ server, store, github, telegram, buffer, finance, notifications, dates, calendar, dataHealth, rhythm, projects, auditLog, secretStore, port: actualPort });
+      resolve({ server, store, github, telegram, buffer, finance, notifications, news, dates, calendar, dataHealth, rhythm, projects, auditLog, secretStore, port: actualPort });
     });
   });
 }
